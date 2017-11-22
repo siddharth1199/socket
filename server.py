@@ -1,6 +1,8 @@
 import socket,sys,os
-from threading import Thread
+from threading import Thread,Lock
 import random
+
+threadLock = Lock()
 
 def check_msg(msg):
 	if (msg.find('JOIN_CHATROOM'.encode('utf-8'))+1):
@@ -11,10 +13,15 @@ def check_msg(msg):
 		return(3)
 	elif (msg.find('CHAT:'.encode('utf-8'))+1):
 		return(4)	
-	else:
+	elif (msg.find('KILL_SERVICE'.encode('utf-8'))+1):
+		os._exit(1)	
+	elif (msg.find('HELO'.encode('utf-8'))+1):
 		return(5)
+	else:
+		return(6)
 
 def join(conn_msg,csock):
+	threadLock.acquire()
 	gname = conn_msg.find('JOIN_CHATROOM:'.encode('utf-8'))+14
 	gname_end = conn_msg.find('\n'.encode('utf-8'))
 	groupname = conn_msg[gname:gname_end]
@@ -40,6 +47,18 @@ def join(conn_msg,csock):
 	response += "JOIN_ID: ".encode('utf-8') + str(clThread.uid).encode('utf-8') + "\n".encode('utf-8')
 
 	csock.send(response)
+	grpmessage = "CHAT:".encode('utf-8') + str(rID).encode('utf-8') + "\n".encode('utf-8')
+	grpmessage += "CLIENT_NAME:".encode('utf-8') + clientname + "\n".encode('utf-8') 
+	grpmessage += "MESSAGE:".encode('utf-8') + clientname + "\n".encode('utf-8') 
+	grpmessage += "CLIENT_ID:".encode('utf-8') + str(clThread.uid).encode('utf-8') +"\n".encode('utf-8')
+	grpmessage += "JOINED_GROUP".encode('utf-8') +"\n".encode('utf-8')
+	if (groupname.decode('utf-8')) == 'room1':
+		for x in range(len(g1_clients)):
+			g1_clients[x].send(grpmessage)
+	elif (groupname.decode('utf-8')) == 'room2':
+		for x in range(len(g2_clients)):
+			g2_clients[x].send(grpmessage)
+	threadLock.release()
 	return groupname,clientname,rID
 
 
@@ -82,14 +101,27 @@ def chat(conn_msg,csock):
 	group_name = conn_msg[grp_start:grp_end]
 	
 	chat_text = 'CHAT: '.encode('utf-8') + str(clThread.roomID).encode('utf-8') + '\n'.encode('utf-8')
-	chat_text += 'CLIENT_NAME: '.encode('utf-8') +str(clThread.clientname).encode('utf-8') + '\n'.encode('utf-8')
-	chat_text += 'MESSAGE: '.encode('utf-8') + str(chat_msg).encode('utf-8')
+	chat_text += 'CLIENT_NAME: '.encode('utf-8') +str(clThread.clientname.encode('utf-8')) + '\n'.encode('utf-8')
+	chat_text += 'MESSAGE: ' + chat_msg.encode('utf-8')
 	if (group_name.decode('utf-8')) == 'g1':
 		for x in range(len(g1_clients)):
 			g1_clients[x].send(chat_text)
 	elif group_name == 'g2':
 		for x in g2_clients:
 			g2_clients[x].send(chat_text)
+
+def resp(msg,socket):
+	msg_start = msg.find('HELO:'.encode('utf-8')) + 5
+	msg_end = msg.find('\n'.encode('utf-8'),msg_start)
+
+	chat_msg = msg[msg_start:msg_end]
+
+	response = "HELO: ".encode('utf-8') + chat_msg + "\n".encode('utf-8')
+	response += "IP: ".encode('utf-8') + str(clThread.ip).encode('utf-8') + "\n".encode('utf-8')
+	response += "PORT: ".encode('utf-8') + str(clThread.port).encode('utf-8') + "\n".encode('utf-8')
+	response += "StudentID: ".encode('utf-8') + "17307932".encode('utf-8') + "\n".encode('utf-8')
+
+	socket.send(response)	
 	
 class client_threads(Thread):
 
@@ -99,7 +131,7 @@ class client_threads(Thread):
 		self.port = port
 		self.chatroom =[] 
 		self.socket = socket
-		self.uid = random.randint(1,999)
+		self.uid = random.randint(1000,2000)
 		self.roomname = ''
 		self.clientname = ''
 		self.roomID = ''
@@ -115,21 +147,19 @@ class client_threads(Thread):
 			elif cflag == 2 : leave(conn_msg,csock)
 			elif cflag == 3 : return(0)
 			elif cflag == 4 : chat(conn_msg,csock)
-			else : print('Invalid input')
+			elif cflag == 5 : resp(conn_msg,csock)
+			else : print('Error, standby')
 			self.chatroom.append(self.roomname)
-			print('Number of clients in g1: ')
+			print('No. of clients in G1: ')
 			print(len(g1_clients))
-			print('Number of clients in g2: ')
+			print('No. of clients in G2: ')
 			print(len(g2_clients))
-	def stop(self):
-		self._stop_event.set()
 
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 host = socket.gethostname()
-port = 40000
-print(host)
+port = int(50000)
 server.bind((host,port))
-
+print(host)
 thread_count = [] 
 
 g1_clients = []
@@ -141,7 +171,7 @@ while True:
 	(csock,(ip,port)) = server.accept()
 
 	print("Connected to ",port,ip)
-
+	#monitoring connections
 
 	clThread = client_threads(ip,port,csock)
 	clThread.start()
